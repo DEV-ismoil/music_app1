@@ -753,7 +753,7 @@
       <button class="btn primary" id="addBtn">+ Add music files</button>
       <button class="btn" id="clearBtn" title="Remove everything">Clear</button>
     </div>
-    <input type="file" id="file-input" accept="audio/*" multiple style="display: none;">
+    <input type="file" id="file-input" accept="audio/*,audio/mpeg,audio/wav,audio/x-m4a,audio/aac" multiple style="display: none;">
     <div class="track-list" id="trackList"></div>
   </div>
 
@@ -1976,19 +1976,16 @@
 
   // ---------- Adding / removing files ----------
   addBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => addFiles(e.target.files));
-
-  document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if(e.dataTransfer.files && e.dataTransfer.files.length){
-      addFiles(e.dataTransfer.files);
-    }
-  });
-
+fileInput.addEventListener('change', async (e) => {
+    if (!e.target.files.length) return;
+    await addFiles(e.target.files);
+    fileInput.value = '';
+});
   async function addFiles(fileList){
     for(const file of fileList){
-      if(!file.type.startsWith('audio/')) continue;
+      const isAudioType = file.type.startsWith('audio/');
+const hasAudioExt = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name);
+if (!isAudioType && !hasAudioExt) continue;
       let { artist, title } = guessArtistTitle(file.name);
       try{
         const tags = await extractId3Tags(file);
