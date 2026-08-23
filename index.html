@@ -910,1210 +910,819 @@
           d.createObjectStore(SETTINGS_STORE, { keyPath: 'key' });
         }
       };
-      req.onsuccess = (e) => resolve(e.target.result);
-      req.onerror = (e) => reject(e);
+      req.onsuccess = () => { db = req.result; resolve(db); };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function dbAddTrack(track){
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(track);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
     });
   }
 
   function dbAll(){
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
-      const store = tx.objectStore(STORE);
-      const req = store.getAll();
+      const req = tx.objectStore(STORE).getAll();
       req.onsuccess = () => resolve(req.result || []);
-      req.onerror = (e) => reject(e);
+      req.onerror = () => reject(req.error);
     });
   }
-  function dbPut(track){
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(track);
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e);
-    });
-  }
+
   function dbDelete(id){
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).delete(id);
       tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e);
+      tx.onerror = () => reject(tx.error);
     });
   }
+
   function dbClear(){
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).clear();
       tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e);
+      tx.onerror = () => reject(tx.error);
     });
   }
+
+  function dbSaveSetting(key, val){
+    if(!db) return;
+    const tx = db.transaction(SETTINGS_STORE, 'readwrite');
+    tx.objectStore(SETTINGS_STORE).put({ key, val });
+  }
+
   function dbGetSetting(key){
     return new Promise((resolve) => {
-      try{
-        const tx = db.transaction(SETTINGS_STORE, 'readonly');
-        const req = tx.objectStore(SETTINGS_STORE).get(key);
-        req.onsuccess = () => resolve(req.result ? req.result.value : undefined);
-        req.onerror = () => resolve(undefined);
-      }catch(e){ resolve(undefined); }
+      if(!db) return resolve(null);
+      const tx = db.transaction(SETTINGS_STORE, 'readonly');
+      const req = tx.objectStore(SETTINGS_STORE).get(key);
+      req.onsuccess = () => resolve(req.result ? req.result.val : null);
+      req.onerror = () => resolve(null);
     });
   }
-  function dbSetSetting(key, value){
+
+  // ---------- ID3 Tag Parser ----------
+  function extractId3Tags(file) {
     return new Promise((resolve) => {
-      try{
-        const tx = db.transaction(SETTINGS_STORE, 'readwrite');
-        tx.objectStore(SETTINGS_STORE).put({ key, value });
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      }catch(e){ resolve(); }
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const buffer = e.target.result;
+        const dv = new DataView(buffer);
+        if (dv.byteLength < 10) return resolve(null);
+        if (dv.getUint8(0) !== 0x49 || dv.getUint8(1) !== 0x44 || dv.getUint8(2) !== 0x33) {
+          return resolve(null);
+        }
+        const version = dv.getUint8(3);
+        const tagSize = ((dv.getUint8(6) & 0x7f) << 21) |
+                         ((dv.getUint8(7) & 0x7f) << 14) |
+                         ((dv.getUint8(8) & 0x7f) << 7) |
+                         (dv.getUint8(9) & 0x7f);
+        let offset = 10;
+        let title = '', artist = '';
+        while (offset < tagSize + 10 && offset < dv.byteLength - 10) {
+          let frameID = '';
+          for (let i = 0; i < 4; i++) {
+            frameID += String.fromCharCode(dv.getUint8(offset + i));
+          }
+          if (frameID.charCodeAt(0) === 0) break;
+          let frameSize = 0;
+          if (version === 4) {
+            frameSize = ((dv.getUint8(offset + 4) & 0x7f) << 21) |
+                        ((dv.getUint8(offset + 5) & 0x7f) << 14) |
+                        ((dv.getUint8(offset + 6) & 0x7f) << 7) |
+                        (dv.getUint8(offset + 7) & 0x7f);
+          } else {
+            frameSize = dv.getUint32(offset + 4);
+          }
+          if (frameSize <= 0 || offset + 10 + frameSize > dv.byteLength) break;
+          
+          if (frameID === 'TIT2' || frameID === 'TPE1') {
+            const encoding = dv.getUint8(offset + 10);
+            let textData = new Uint8Array(buffer, offset + 11, frameSize - 1);
+            let str = '';
+            if (encoding === 1 || encoding === 2) { // UTF-16
+              let decoder = new TextDecoder('utf-16');
+              str = decoder.decode(textData);
+            } else if (encoding === 3) { // UTF-8
+              let decoder = new TextDecoder('utf-8');
+              str = decoder.decode(textData);
+            } else { // ISO-8859-1
+              for (let k = 0; k < textData.length; k++) {
+                if (textData[k] === 0) break;
+                str += String.fromCharCode(textData[k]);
+              }
+            }
+            str = str.replace(/\0/g, '').trim();
+            if (frameID === 'TIT2') title = str;
+            if (frameID === 'TPE1') artist = str;
+          }
+          offset += 10 + frameSize;
+        }
+        resolve({ title, artist });
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsArrayBuffer(file.slice(0, 128 * 1024));
     });
   }
 
-  // ---------- App state ----------
+  function guessArtistTitle(filename) {
+    let name = filename.replace(/\.[^/.]+$/, "");
+    let parts = name.split(" - ");
+    if (parts.length >= 2) {
+      return { artist: parts[0].trim(), title: parts.slice(1).join(" - ").trim() };
+    }
+    return { artist: "Unknown Artist", title: name };
+  }
+
+  // ---------- Audio Engine ----------
   let library = [];
-  let filtered = [];
   let currentIndex = -1;
-  let isPlaying = false;
-  let isShuffle = false;
-  let repeatMode = 0; // 0 off, 1 all, 2 one
-  let objectUrl = null;
-  let artObjectUrl = null;
-  let dragId = null;
-  const savedEq = { bass: 0, mid: 0, treble: 0 };
-
+  let audioCtx, audioSource, gainNode, bassFilter, midFilter, trebleFilter, analyser;
   const audio = new Audio();
-  audio.volume = 0.7;
+  audio.crossOrigin = "anonymous";
 
+  let isShuffle = false;
+  let isRepeat = false;
+  let currentTheme = 'vinyl';
+
+  function initAudioNodes() {
+    if (audioCtx) return;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    audioCtx = new AudioCtx();
+    
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+
+    gainNode = audioCtx.createGain();
+
+    bassFilter = audioCtx.createBiquadFilter();
+    bassFilter.type = 'lowshelf';
+    bassFilter.frequency.value = 250;
+
+    midFilter = audioCtx.createBiquadFilter();
+    midFilter.type = 'peaking';
+    midFilter.frequency.value = 1500;
+    midFilter.Q.value = 1;
+
+    trebleFilter = audioCtx.createBiquadFilter();
+    trebleFilter.type = 'highshelf';
+    trebleFilter.frequency.value = 4000;
+
+    audioSource = audioCtx.createMediaElementSource(audio);
+    audioSource.connect(bassFilter);
+    bassFilter.connect(midFilter);
+    midFilter.connect(trebleFilter);
+    trebleFilter.connect(gainNode);
+    gainNode.connect(analyser);
+    analyser.connect(audioCtx.destination);
+  }
+
+  // ---------- State & UI Rendering ----------
   const trackListEl = document.getElementById('trackList');
-  const searchEl = document.getElementById('search');
-  const fileInput = document.getElementById('file-input');
-  const addBtn = document.getElementById('addBtn');
-  addBtn.addEventListener('click', () => {
-    fileInput.click();
-});
+  const searchInput = document.getElementById('search');
   const npTitle = document.getElementById('npTitle');
   const npArtist = document.getElementById('npArtist');
-  const disc = document.getElementById('disc');
-  const tonearm = document.getElementById('tonearm');
-  const discLabel = document.getElementById('discLabel');
   const discText = document.getElementById('discText');
   const discArtist = document.getElementById('discArtist');
+  const disc = document.getElementById('disc');
+  const tonearm = document.getElementById('tonearm');
   const playBtn = document.getElementById('playBtn');
   const playIcon = document.getElementById('playIcon');
-  const prevBtn = document.getElementById('prevBtn');
-  const nextBtn = document.getElementById('nextBtn');
-  const shuffleBtn = document.getElementById('shuffleBtn');
-  const repeatBtn = document.getElementById('repeatBtn');
+  const curTimeEl = document.getElementById('curTime');
+  const durTimeEl = document.getElementById('durTime');
   const bar = document.getElementById('bar');
   const barFill = document.getElementById('barFill');
   const barKnob = document.getElementById('barKnob');
-  const curTime = document.getElementById('curTime');
-  const durTime = document.getElementById('durTime');
   const volBar = document.getElementById('volBar');
   const volFill = document.getElementById('volFill');
+  const shuffleBtn = document.getElementById('shuffleBtn');
+  const repeatBtn = document.getElementById('repeatBtn');
 
-  const themeBtn = document.getElementById('themeBtn');
-  const eqBtn = document.getElementById('eqBtn');
-  const sleepBtn = document.getElementById('sleepBtn');
-  const miniBtn = document.getElementById('miniBtn');
-  const themePanel = document.getElementById('themePanel');
-  const eqPanel = document.getElementById('eqPanel');
-  const sleepPanel = document.getElementById('sleepPanel');
-  const eqBassEl = document.getElementById('eqBass');
-  const eqMidEl = document.getElementById('eqMid');
-  const eqTrebleEl = document.getElementById('eqTreble');
-  const eqResetBtn = document.getElementById('eqResetBtn');
-  const sleepStatus = document.getElementById('sleepStatus');
-
-  const PLAY_SVG = '<polygon points="6 3 20 12 6 21 6 3"></polygon>';
-  const PAUSE_SVG = '<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>';
-
-  function fmtTime(s){
-    if(!isFinite(s) || s < 0) s = 0;
-    const m = Math.floor(s/60);
-    const sec = Math.floor(s%60).toString().padStart(2,'0');
-    return `${m}:${sec}`;
+  function formatTime(s) {
+    if (isNaN(s) || !isFinite(s)) return '0:00';
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec < 10 ? '0' : ''}${sec}`;
   }
 
-  function guessArtistTitle(filename){
-    let name = filename.replace(/\.[^/.]+$/, '');
-    let parts = name.split(' - ');
-    if(parts.length >= 2){
-      return { artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() };
-    }
-    return { artist: 'Unknown artist', title: name.trim() };
-  }
+  function render() {
+    const q = searchInput.value.toLowerCase().trim();
+    trackListEl.innerHTML = '';
 
-  // ---------- Album art (ID3v2 APIC extraction, mp3 files) ----------
-  async function extractAlbumArt(file){
-    try{
-      const buf = await file.slice(0, 3 * 1024 * 1024).arrayBuffer();
-      const view = new DataView(buf);
-      if(buf.byteLength < 10) return null;
-      if(view.getUint8(0) !== 0x49 || view.getUint8(1) !== 0x44 || view.getUint8(2) !== 0x33) return null; // "ID3"
-      const verMajor = view.getUint8(3);
-      const tagSize = ((view.getUint8(6)&0x7f)<<21) | ((view.getUint8(7)&0x7f)<<14) | ((view.getUint8(8)&0x7f)<<7) | (view.getUint8(9)&0x7f);
-      let offset = 10;
-      const tagEnd = Math.min(10 + tagSize, buf.byteLength);
-
-      while(offset < tagEnd - 10){
-        const frameId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset+1), view.getUint8(offset+2), view.getUint8(offset+3));
-        let frameSize;
-        if(verMajor >= 4){
-          frameSize = ((view.getUint8(offset+4)&0x7f)<<21) | ((view.getUint8(offset+5)&0x7f)<<14) | ((view.getUint8(offset+6)&0x7f)<<7) | (view.getUint8(offset+7)&0x7f);
-        } else {
-          frameSize = (view.getUint8(offset+4)<<24) | (view.getUint8(offset+5)<<16) | (view.getUint8(offset+6)<<8) | (view.getUint8(offset+7));
-        }
-        if(frameSize <= 0 || offset + 10 + frameSize > buf.byteLength) break;
-
-        if(frameId === 'APIC'){
-          let p = offset + 10;
-          const frameEnd = p + frameSize;
-          const encoding = view.getUint8(p); p += 1;
-          let mimeEnd = p;
-          while(mimeEnd < frameEnd && view.getUint8(mimeEnd) !== 0) mimeEnd++;
-          const mime = new TextDecoder('iso-8859-1').decode(new Uint8Array(buf, p, mimeEnd - p));
-          p = mimeEnd + 1;
-          p += 1; // picture type byte
-          if(encoding === 1 || encoding === 2){
-            while(p < frameEnd - 1 && !(view.getUint8(p) === 0 && view.getUint8(p+1) === 0)) p += 2;
-            p += 2;
-          } else {
-            while(p < frameEnd && view.getUint8(p) !== 0) p++;
-            p += 1;
-          }
-          if(p >= frameEnd) return null;
-          const imgData = buf.slice(p, frameEnd);
-          const mimeType = (mime && mime.toLowerCase().startsWith('image')) ? mime : 'image/jpeg';
-          return new Blob([imgData], { type: mimeType });
-        }
-        offset += 10 + frameSize;
-      }
-      return null;
-    }catch(e){
-      return null;
-    }
-  }
-
-  window.__test_extractAlbumArt = extractAlbumArt; // exposed for automated testing/debugging only
-
-  function decodeId3String(bytes, encoding){
-    try{
-      if(encoding === 0){
-        return new TextDecoder('iso-8859-1').decode(bytes).replace(/\u0000+$/,'').trim();
-      } else if(encoding === 3){
-        return new TextDecoder('utf-8').decode(bytes).replace(/\u0000+$/,'').trim();
-      } else if(encoding === 2){
-        return new TextDecoder('utf-16be').decode(bytes).replace(/\u0000+$/,'').trim();
-      } else {
-        // encoding 1: UTF-16 with BOM (defaults to LE if no/garbled BOM)
-        return new TextDecoder('utf-16le').decode(bytes).replace(/^\ufeff/,'').replace(/\u0000+$/,'').trim();
-      }
-    }catch(e){
-      return '';
-    }
-  }
-
-  // Reads the TIT2 (title) and TPE1 (artist) text frames from an ID3v2 tag,
-  // so real tagged metadata is used instead of guessing from the filename.
-  async function extractId3Tags(file){
-    try{
-      const buf = await file.slice(0, 1 * 1024 * 1024).arrayBuffer();
-      const view = new DataView(buf);
-      if(buf.byteLength < 10) return {};
-      if(view.getUint8(0) !== 0x49 || view.getUint8(1) !== 0x44 || view.getUint8(2) !== 0x33) return {};
-      const verMajor = view.getUint8(3);
-      const tagSize = ((view.getUint8(6)&0x7f)<<21) | ((view.getUint8(7)&0x7f)<<14) | ((view.getUint8(8)&0x7f)<<7) | (view.getUint8(9)&0x7f);
-      let offset = 10;
-      const tagEnd = Math.min(10 + tagSize, buf.byteLength);
-      const result = {};
-
-      while(offset < tagEnd - 10){
-        const frameId = String.fromCharCode(view.getUint8(offset), view.getUint8(offset+1), view.getUint8(offset+2), view.getUint8(offset+3));
-        let frameSize;
-        if(verMajor >= 4){
-          frameSize = ((view.getUint8(offset+4)&0x7f)<<21) | ((view.getUint8(offset+5)&0x7f)<<14) | ((view.getUint8(offset+6)&0x7f)<<7) | (view.getUint8(offset+7)&0x7f);
-        } else {
-          frameSize = (view.getUint8(offset+4)<<24) | (view.getUint8(offset+5)<<16) | (view.getUint8(offset+6)<<8) | (view.getUint8(offset+7));
-        }
-        if(frameSize <= 0 || offset + 10 + frameSize > buf.byteLength) break;
-
-        if((frameId === 'TIT2' || frameId === 'TPE1') && frameSize >= 1){
-          const encoding = view.getUint8(offset + 10);
-          const strBytes = new Uint8Array(buf, offset + 11, frameSize - 1);
-          const text = decodeId3String(strBytes, encoding);
-          if(text){
-            if(frameId === 'TIT2') result.title = text;
-            if(frameId === 'TPE1') result.artist = text;
-          }
-        }
-        offset += 10 + frameSize;
-        if(result.title && result.artist) break;
-      }
-      return result;
-    }catch(e){
-      return {};
-    }
-  }
-
-  window.__test_extractId3Tags = extractId3Tags; // exposed for automated testing/debugging only
-
-  function setDiscVisual(t){
-    if(artObjectUrl){ URL.revokeObjectURL(artObjectUrl); artObjectUrl = null; }
-    if(t && t.art){
-      artObjectUrl = URL.createObjectURL(t.art);
-      discLabel.style.backgroundImage = `url(${artObjectUrl})`;
-      discLabel.classList.add('has-art');
-      discText.style.display = 'none';
-      discArtist.style.display = 'none';
-    } else {
-      discLabel.style.backgroundImage = 'none';
-      discLabel.classList.remove('has-art');
-      discText.style.display = '';
-      discArtist.style.display = '';
-      const title = t ? t.title : 'Groove';
-      const artist = t ? t.artist : '';
-      discText.textContent = title;
-      discArtist.textContent = artist;
-      const len = title.length;
-      let size = 20;
-      if(len > 10) size = 17;
-      if(len > 18) size = 14;
-      if(len > 28) size = 12;
-      if(len > 40) size = 10.5;
-      discText.style.fontSize = size + 'px';
-    }
-  }
-
-  // ---------- Rendering ----------
-  function render(){
-    const q = searchEl.value.trim().toLowerCase();
-    filtered = library.filter(t =>
-      !q || t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
-    );
-    const canDrag = filtered.length === library.length;
-
-    if(library.length === 0){
-      trackListEl.innerHTML = `<div class="empty-lib">
-        <b>Your library is empty.</b><br><br>
-        Click <b>+ Add music files</b> and pick songs you own from your computer.
-        They'll be saved here permanently — no need to re-add them next time.
-      </div>`;
+    if (library.length === 0) {
+      trackListEl.innerHTML = `<div class="empty-lib"><b>Your library is empty</b><br>Click "+ Add music files" or drop audio files here.</div>`;
       return;
     }
 
-    trackListEl.innerHTML = filtered.map((t, i) => {
-      const activeClass = (t.id === (library[currentIndex] && library[currentIndex].id)) ? 'active' : '';
-      return `<div class="track-row ${activeClass}" data-id="${t.id}" draggable="${canDrag}">
-        <div class="track-num">${i+1}</div>
+    library.forEach((item, idx) => {
+      if (q && !item.title.toLowerCase().includes(q) && !item.artist.toLowerCase().includes(q)) {
+        return;
+      }
+      const row = document.createElement('div');
+      row.className = 'track-row' + (idx === currentIndex ? ' active' : '');
+      row.draggable = true;
+      row.dataset.index = idx;
+
+      row.innerHTML = `
+        <div class="track-num">${idx + 1}</div>
         <div class="track-meta">
-          <div class="track-title">${escapeHtml(t.title)}</div>
-          <div class="track-artist">${escapeHtml(t.artist)}</div>
+          <div class="track-title">${escapeHtml(item.title)}</div>
+          <div class="track-artist">${escapeHtml(item.artist)}</div>
         </div>
-        <div class="track-dur">${t.duration ? fmtTime(t.duration) : ''}</div>
-        <button class="track-del" data-del="${t.id}" title="Remove">✕</button>
-      </div>`;
-    }).join('');
+        <div class="track-dur">--:--</div>
+        <button class="track-del" title="Delete">✕</button>
+      `;
+
+      row.addEventListener('dblclick', () => playTrack(idx));
+      row.querySelector('.track-del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteTrack(idx);
+      });
+
+      // Drag & Drop reorder
+      row.addEventListener('dragstart', (e) => {
+        row.classList.add('dragging');
+        e.dataTransfer.setData('text/plain', idx);
+      });
+      row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        row.classList.add('drag-over');
+      });
+      row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        row.classList.remove('drag-over');
+        const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const toIdx = idx;
+        if (fromIdx !== toIdx) reorderTracks(fromIdx, toIdx);
+      });
+
+      trackListEl.appendChild(row);
+    });
   }
 
-  function escapeHtml(s){
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+  function escapeHtml(str) {
+    return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // ---------- Playback ----------
-  function libIndexOf(id){ return library.findIndex(t => t.id === id); }
-
-  function loadTrack(idx, autoplay){
-    if(idx < 0 || idx >= library.length) return;
-    currentIndex = idx;
-    const t = library[idx];
-    if(objectUrl) URL.revokeObjectURL(objectUrl);
-    objectUrl = URL.createObjectURL(t.blob);
-    audio.src = objectUrl;
-    npTitle.textContent = t.title;
-    npArtist.textContent = t.artist;
-    setDiscVisual(t);
+  function reorderTracks(from, to) {
+    const moved = library.splice(from, 1)[0];
+    library.splice(to, 0, moved);
+    if (currentIndex === from) currentIndex = to;
+    else if (from < currentIndex && to >= currentIndex) currentIndex--;
+    else if (from > currentIndex && to <= currentIndex) currentIndex++;
     render();
-    if(autoplay){
-      ensureAudioGraph();
-      if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-      audio.play().catch(()=>{});
+    saveOrder();
+  }
+
+  async function saveOrder() {
+    await dbClear();
+    for (let item of library) {
+      await dbAddTrack(item);
     }
   }
 
-  function play(){
-    ensureAudioGraph();
-    if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-    if(currentIndex === -1 && library.length > 0){
-      loadTrack(0, true);
-      return;
+  async function deleteTrack(idx) {
+    const item = library[idx];
+    if (!item) return;
+    await dbDelete(item.id);
+    library.splice(idx, 1);
+    if (currentIndex === idx) {
+      audio.pause();
+      currentIndex = -1;
+      npTitle.textContent = "Nothing loaded yet";
+      npArtist.textContent = "ADD SOME MUSIC TO BEGIN";
+      discText.textContent = "Groove";
+      discArtist.textContent = "";
+      disc.classList.remove('spinning');
+      tonearm.classList.remove('playing');
+    } else if (currentIndex > idx) {
+      currentIndex--;
     }
-    audio.play().catch(()=>{});
-  }
-  function pause(){ audio.pause(); }
-
-  function playNext(auto){
-    if(library.length === 0) return;
-    let idx;
-    if(isShuffle){
-      idx = Math.floor(Math.random() * library.length);
-    } else {
-      idx = currentIndex + 1;
-      if(idx >= library.length){
-        if(repeatMode === 1) idx = 0;
-        else { if(auto){ pause(); } return; }
-      }
-    }
-    loadTrack(idx, true);
-  }
-  function playPrev(){
-    if(library.length === 0) return;
-    let idx = currentIndex - 1;
-    if(idx < 0) idx = library.length - 1;
-    loadTrack(idx, true);
+    render();
   }
 
-  audio.addEventListener('play', () => {
-    isPlaying = true;
+  function playTrack(idx) {
+    if (idx < 0 || idx >= library.length) return;
+    initAudioNodes();
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    currentIndex = idx;
+    const item = library[idx];
+    const url = URL.createObjectURL(item.blob);
+    audio.src = url;
+    audio.play();
+
+    npTitle.textContent = item.title;
+    npArtist.textContent = item.artist;
+    discText.textContent = item.title;
+    discArtist.textContent = item.artist;
+
     disc.classList.add('spinning');
     tonearm.classList.add('playing');
-    playIcon.innerHTML = PAUSE_SVG;
-  });
-  audio.addEventListener('pause', () => {
-    isPlaying = false;
-    disc.classList.remove('spinning');
-    tonearm.classList.remove('playing');
-    playIcon.innerHTML = PLAY_SVG;
-  });
+    updatePlayIcon(true);
+    render();
+  }
+
+  function togglePlay() {
+    if (currentIndex === -1 && library.length > 0) {
+      playTrack(0);
+      return;
+    }
+    if (audio.paused) {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      audio.play();
+      disc.classList.add('spinning');
+      tonearm.classList.add('playing');
+      updatePlayIcon(true);
+    } else {
+      audio.pause();
+      disc.classList.remove('spinning');
+      tonearm.classList.remove('playing');
+      updatePlayIcon(false);
+    }
+  }
+
+  function updatePlayIcon(isPlaying) {
+    if (isPlaying) {
+      playIcon.innerHTML = `<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>`;
+    } else {
+      playIcon.innerHTML = `<polygon points="6 3 20 12 6 21 6 3"></polygon>`;
+    }
+  }
+
+  function nextTrack() {
+    if (library.length === 0) return;
+    if (isShuffle) {
+      let nextIdx = Math.floor(Math.random() * library.length);
+      playTrack(nextIdx);
+    } else {
+      let nextIdx = (currentIndex + 1) % library.length;
+      playTrack(nextIdx);
+    }
+  }
+
+  function prevTrack() {
+    if (library.length === 0) return;
+    if (audio.currentTime > 3) {
+      audio.currentTime = 0;
+      return;
+    }
+    let prevIdx = (currentIndex - 1 + library.length) % library.length;
+    playTrack(prevIdx);
+  }
+
+  // Audio Event Listeners
   audio.addEventListener('timeupdate', () => {
-    if(!audio.duration) return;
+    if (!audio.duration) return;
     const pct = (audio.currentTime / audio.duration) * 100;
     barFill.style.width = pct + '%';
     barKnob.style.left = pct + '%';
-    curTime.textContent = fmtTime(audio.currentTime);
-    durTime.textContent = fmtTime(audio.duration);
+    curTimeEl.textContent = formatTime(audio.currentTime);
+    durTimeEl.textContent = formatTime(audio.duration);
   });
+
   audio.addEventListener('ended', () => {
-    if(repeatMode === 2){
+    if (isRepeat) {
       audio.currentTime = 0;
       audio.play();
     } else {
-      playNext(true);
+      nextTrack();
     }
   });
 
-  // ---------- Equalizer ----------
-  let audioCtx = null, eqSource = null, bassFilter = null, midFilter = null, trebleFilter = null, eqConnected = false;
-
-  function ensureAudioGraph(){
-    if(eqConnected) return;
-    try{
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      eqSource = audioCtx.createMediaElementSource(audio);
-      bassFilter = audioCtx.createBiquadFilter();
-      bassFilter.type = 'lowshelf'; bassFilter.frequency.value = 120; bassFilter.gain.value = savedEq.bass;
-      midFilter = audioCtx.createBiquadFilter();
-      midFilter.type = 'peaking'; midFilter.frequency.value = 1000; midFilter.Q.value = 0.9; midFilter.gain.value = savedEq.mid;
-      trebleFilter = audioCtx.createBiquadFilter();
-      trebleFilter.type = 'highshelf'; trebleFilter.frequency.value = 8000; trebleFilter.gain.value = savedEq.treble;
-      eqSource.connect(bassFilter);
-      bassFilter.connect(midFilter);
-      midFilter.connect(trebleFilter);
-      trebleFilter.connect(audioCtx.destination);
-      eqConnected = true;
-    }catch(e){
-      console.error('Equalizer init failed', e);
-    }
-  }
-
-  eqBassEl.addEventListener('input', () => {
-    savedEq.bass = parseFloat(eqBassEl.value);
-    if(bassFilter) bassFilter.gain.value = savedEq.bass;
-    dbSetSetting('eqBass', savedEq.bass);
+  // Progress Bar Drag/Seek
+  let isSeeking = false;
+  bar.addEventListener('mousedown', (e) => {
+    isSeeking = true;
+    seek(e);
   });
-  eqMidEl.addEventListener('input', () => {
-    savedEq.mid = parseFloat(eqMidEl.value);
-    if(midFilter) midFilter.gain.value = savedEq.mid;
-    dbSetSetting('eqMid', savedEq.mid);
+  window.addEventListener('mousemove', (e) => { if (isSeeking) seek(e); });
+  window.addEventListener('mouseup', () => { isSeeking = false; });
+
+  function seek(e) {
+    const rect = bar.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    if (audio.duration) {
+      audio.currentTime = pos * audio.duration;
+    }
+  }
+
+  // Volume Bar
+  let isVolDragging = false;
+  volBar.addEventListener('mousedown', (e) => {
+    isVolDragging = true;
+    setVolume(e);
   });
-  eqTrebleEl.addEventListener('input', () => {
-    savedEq.treble = parseFloat(eqTrebleEl.value);
-    if(trebleFilter) trebleFilter.gain.value = savedEq.treble;
-    dbSetSetting('eqTreble', savedEq.treble);
-  });
-  eqResetBtn.addEventListener('click', () => {
-    savedEq.bass = 0; savedEq.mid = 0; savedEq.treble = 0;
-    eqBassEl.value = 0; eqMidEl.value = 0; eqTrebleEl.value = 0;
-    if(bassFilter) bassFilter.gain.value = 0;
-    if(midFilter) midFilter.gain.value = 0;
-    if(trebleFilter) trebleFilter.gain.value = 0;
-    dbSetSetting('eqBass', 0);
-    dbSetSetting('eqMid', 0);
-    dbSetSetting('eqTreble', 0);
-  });
+  window.addEventListener('mousemove', (e) => { if (isVolDragging) setVolume(e); });
+  window.addEventListener('mouseup', () => { isVolDragging = false; });
 
-  // ---------- Sleep timer ----------
-  let sleepTimeout = null, sleepInterval = null, sleepEndAt = null;
-
-  function clearSleepTimer(){
-    if(sleepTimeout) clearTimeout(sleepTimeout);
-    if(sleepInterval) clearInterval(sleepInterval);
-    sleepTimeout = null; sleepInterval = null; sleepEndAt = null;
-    sleepStatus.textContent = '';
-    sleepBtn.classList.remove('active');
-  }
-  function updateSleepDisplay(){
-    if(!sleepEndAt) return;
-    const remain = Math.max(0, sleepEndAt - Date.now());
-    const m = Math.floor(remain / 60000);
-    const s = Math.floor((remain % 60000) / 1000);
-    sleepStatus.textContent = `Pausing in ${m}:${s.toString().padStart(2,'0')}`;
-  }
-  function setSleepTimer(minutes){
-    clearSleepTimer();
-    if(!minutes) return;
-    sleepEndAt = Date.now() + minutes * 60000;
-    sleepBtn.classList.add('active');
-    updateSleepDisplay();
-    sleepInterval = setInterval(updateSleepDisplay, 1000);
-    sleepTimeout = setTimeout(() => { pause(); clearSleepTimer(); }, minutes * 60000);
+  function setVolume(e) {
+    const rect = volBar.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.volume = pos;
+    volFill.style.width = (pos * 100) + '%';
   }
 
-  document.querySelectorAll('.sleep-options button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const min = parseInt(btn.dataset.min, 10);
-      if(min > 0) setSleepTimer(min); else clearSleepTimer();
-      closeAllPopovers();
-    });
-  });
+  // Controls
+  playBtn.addEventListener('click', togglePlay);
+  document.getElementById('nextBtn').addEventListener('click', nextTrack);
+  document.getElementById('prevBtn').addEventListener('click', prevTrack);
 
-  // ---------- Themes ----------
-  const fxCanvas = document.getElementById('fxCanvas');
-  const fxCtx = fxCanvas.getContext('2d');
-  let fxRAF = null;
-
-  function resizeCanvas(){
-    fxCanvas.width = window.innerWidth;
-    fxCanvas.height = window.innerHeight;
-  }
-  window.addEventListener('resize', resizeCanvas);
-  resizeCanvas();
-
-  function stopFx(){
-    if(fxRAF) cancelAnimationFrame(fxRAF);
-    fxRAF = null;
-    fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-  }
-
-  // Mouse position tracked globally so interactive themes can react to it
-  // without stealing pointer events from the actual UI (canvas stays
-  // pointer-events:none; buttons/rows above it work exactly as before).
-  let mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2;
-  document.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; });
-  document.addEventListener('click', (e) => {
-    if(currentTheme === 'fireworks') spawnFirework(e.clientX, e.clientY);
-    if(currentTheme === 'ripple') spawnRipple(e.clientX, e.clientY);
-    if(currentTheme === 'bubbles') popBubblesNear(e.clientX, e.clientY);
-  });
-
-  function startMatrixRain(){
-    stopFx();
-    const chars = 'アイウエオカキクケコサシスセソタチツテト0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const fontSize = 15;
-    let columns = Math.floor(fxCanvas.width / fontSize);
-    let drops = new Array(columns).fill(0).map(() => Math.random() * -50);
-    function draw(){
-      fxCtx.fillStyle = 'rgba(2,4,2,0.09)';
-      fxCtx.fillRect(0, 0, fxCanvas.width, fxCanvas.height);
-      fxCtx.fillStyle = '#00FF66';
-      fxCtx.font = fontSize + 'px monospace';
-      for(let i = 0; i < drops.length; i++){
-        const ch = chars[Math.floor(Math.random() * chars.length)];
-        fxCtx.fillText(ch, i * fontSize, drops[i] * fontSize);
-        if(drops[i] * fontSize > fxCanvas.height && Math.random() > 0.975) drops[i] = 0;
-        drops[i]++;
-      }
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  function startGalaxyStars(){
-    stopFx();
-    const stars = [];
-    for(let i = 0; i < 140; i++){
-      stars.push({ x: Math.random()*fxCanvas.width, y: Math.random()*fxCanvas.height, r: Math.random()*1.3+0.2, a: Math.random() });
-    }
-    let shooting = [];
-    let frame = 0;
-    function spawnShooting(){
-      shooting.push({
-        x: Math.random() * fxCanvas.width * 0.7,
-        y: Math.random() * fxCanvas.height * 0.3,
-        len: 80 + Math.random()*100,
-        speed: 8 + Math.random()*6,
-        angle: Math.PI/4 + (Math.random()*0.2 - 0.1),
-        life: 0,
-        maxLife: 40 + Math.random()*20
-      });
-    }
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      stars.forEach(s => {
-        s.a += (Math.random()-0.5)*0.05;
-        s.a = Math.max(0.2, Math.min(1, s.a));
-        fxCtx.beginPath();
-        fxCtx.fillStyle = `rgba(255,255,255,${s.a})`;
-        fxCtx.arc(s.x, s.y, s.r, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      frame++;
-      if(frame % 90 === 0 && Math.random() > 0.3) spawnShooting();
-      shooting.forEach(st => {
-        st.life++;
-        st.x += Math.cos(st.angle) * st.speed;
-        st.y += Math.sin(st.angle) * st.speed;
-        const tailX = st.x - Math.cos(st.angle) * st.len;
-        const tailY = st.y - Math.sin(st.angle) * st.len;
-        const grad = fxCtx.createLinearGradient(st.x, st.y, tailX, tailY);
-        grad.addColorStop(0, 'rgba(255,255,255,0.9)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        fxCtx.strokeStyle = grad;
-        fxCtx.lineWidth = 2;
-        fxCtx.beginPath();
-        fxCtx.moveTo(st.x, st.y);
-        fxCtx.lineTo(tailX, tailY);
-        fxCtx.stroke();
-      });
-      shooting = shooting.filter(st => st.life < st.maxLife);
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  // ================= ANIMATED THEMES =================
-
-  function startAurora(){
-    stopFx();
-    let t = 0;
-    const bands = [
-      { color: 'rgba(80,220,180,0.10)', amp: 60, freq: 0.004, speed: 0.6, yBase: 0.25 },
-      { color: 'rgba(120,140,255,0.08)', amp: 80, freq: 0.003, speed: 0.4, yBase: 0.4 },
-      { color: 'rgba(200,120,255,0.07)', amp: 70, freq: 0.005, speed: 0.5, yBase: 0.55 }
-    ];
-    function draw(){
-      const w = fxCanvas.width, h = fxCanvas.height;
-      fxCtx.clearRect(0, 0, w, h);
-      bands.forEach(b => {
-        fxCtx.beginPath();
-        for(let x = 0; x <= w; x += 12){
-          const y = h*b.yBase + Math.sin(x*b.freq + t*b.speed)*b.amp + Math.sin(x*b.freq*0.5 - t*b.speed*0.7)*b.amp*0.5;
-          if(x === 0) fxCtx.moveTo(x, y); else fxCtx.lineTo(x, y);
-        }
-        fxCtx.lineTo(w, 0); fxCtx.lineTo(0, 0); fxCtx.closePath();
-        fxCtx.fillStyle = b.color;
-        fxCtx.fill();
-      });
-      t += 1;
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  function startRain(){
-    stopFx();
-    const drops = [];
-    for(let i = 0; i < 150; i++){
-      drops.push({ x: Math.random()*fxCanvas.width, y: Math.random()*fxCanvas.height, len: 10+Math.random()*15, speed: 6+Math.random()*8 });
-    }
-    let flashAlpha = 0, frame = 0;
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      if(flashAlpha > 0){
-        fxCtx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
-        fxCtx.fillRect(0, 0, fxCanvas.width, fxCanvas.height);
-        flashAlpha -= 0.03;
-      }
-      fxCtx.strokeStyle = 'rgba(180,200,255,0.35)';
-      fxCtx.lineWidth = 1;
-      drops.forEach(d => {
-        fxCtx.beginPath();
-        fxCtx.moveTo(d.x, d.y);
-        fxCtx.lineTo(d.x - 2, d.y + d.len);
-        fxCtx.stroke();
-        d.y += d.speed;
-        d.x -= 0.5;
-        if(d.y > fxCanvas.height){ d.y = -20; d.x = Math.random()*fxCanvas.width; }
-      });
-      frame++;
-      if(frame % 140 === 0 && Math.random() > 0.5) flashAlpha = 0.5;
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  function startFireflies(){
-    stopFx();
-    const flies = [];
-    for(let i = 0; i < 40; i++){
-      flies.push({ x: Math.random()*fxCanvas.width, y: Math.random()*fxCanvas.height, a: Math.random()*Math.PI*2, speed: 0.3+Math.random()*0.5, phase: Math.random()*Math.PI*2 });
-    }
-    let t = 0;
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      flies.forEach(f => {
-        f.a += (Math.random()-0.5)*0.1;
-        f.x += Math.cos(f.a)*f.speed;
-        f.y += Math.sin(f.a)*f.speed;
-        if(f.x < 0) f.x = fxCanvas.width; if(f.x > fxCanvas.width) f.x = 0;
-        if(f.y < 0) f.y = fxCanvas.height; if(f.y > fxCanvas.height) f.y = 0;
-        const glow = (Math.sin(t*0.05 + f.phase) + 1) / 2;
-        fxCtx.beginPath();
-        fxCtx.fillStyle = `rgba(200,255,140,${0.15 + glow*0.55})`;
-        fxCtx.arc(f.x, f.y, 2 + glow*2, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      t++;
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  function startSnowfall(){
-    stopFx();
-    const flakes = [];
-    for(let i = 0; i < 120; i++){
-      flakes.push({ x: Math.random()*fxCanvas.width, y: Math.random()*fxCanvas.height, r: 1+Math.random()*2.5, speed: 0.5+Math.random()*1.5, drift: Math.random()*2-1 });
-    }
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      fxCtx.fillStyle = 'rgba(255,255,255,0.85)';
-      flakes.forEach(f => {
-        fxCtx.beginPath();
-        fxCtx.arc(f.x, f.y, f.r, 0, Math.PI*2);
-        fxCtx.fill();
-        f.y += f.speed;
-        f.x += Math.sin(f.y*0.01)*f.drift*0.5;
-        if(f.y > fxCanvas.height){ f.y = -5; f.x = Math.random()*fxCanvas.width; }
-      });
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  function startLavaLamp(){
-    stopFx();
-    const blobs = [];
-    for(let i = 0; i < 6; i++){
-      blobs.push({ x: Math.random()*fxCanvas.width, y: fxCanvas.height + Math.random()*200, r: 40+Math.random()*50, speed: 0.3+Math.random()*0.4, wob: Math.random()*Math.PI*2 });
-    }
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      fxCtx.filter = 'blur(18px)';
-      blobs.forEach(b => {
-        b.y -= b.speed;
-        b.wob += 0.02;
-        const x = b.x + Math.sin(b.wob)*30;
-        if(b.y < -100){ b.y = fxCanvas.height + 100; b.x = Math.random()*fxCanvas.width; }
-        const grad = fxCtx.createRadialGradient(x, b.y, 0, x, b.y, b.r);
-        grad.addColorStop(0, 'rgba(255,120,60,0.55)');
-        grad.addColorStop(1, 'rgba(255,120,60,0)');
-        fxCtx.fillStyle = grad;
-        fxCtx.beginPath();
-        fxCtx.arc(x, b.y, b.r, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      fxCtx.filter = 'none';
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  // ================= INTERACTIVE THEMES =================
-
-  let nebulaParticles = [];
-  function startNebulaInteractive(){
-    stopFx();
-    nebulaParticles = [];
-    for(let i = 0; i < 90; i++){
-      nebulaParticles.push({ x: Math.random()*fxCanvas.width, y: Math.random()*fxCanvas.height, vx: 0, vy: 0, r: 1+Math.random()*2, hue: 260+Math.random()*80 });
-    }
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      nebulaParticles.forEach(p => {
-        const dx = mouseX - p.x, dy = mouseY - p.y;
-        const dist = Math.max(Math.sqrt(dx*dx + dy*dy), 1);
-        const force = Math.min(2000 / (dist*dist), 0.6);
-        p.vx += (dx/dist) * force * 0.6;
-        p.vy += (dy/dist) * force * 0.6;
-        p.vx *= 0.96; p.vy *= 0.96;
-        p.x += p.vx; p.y += p.vy;
-        if(p.x < 0) p.x = fxCanvas.width; if(p.x > fxCanvas.width) p.x = 0;
-        if(p.y < 0) p.y = fxCanvas.height; if(p.y > fxCanvas.height) p.y = 0;
-        fxCtx.beginPath();
-        fxCtx.fillStyle = `hsla(${p.hue},80%,65%,0.7)`;
-        fxCtx.arc(p.x, p.y, p.r, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  let fireworkParticles = [];
-  function spawnFirework(x, y){
-    const hue = Math.random()*360;
-    const count = 40;
-    for(let i = 0; i < count; i++){
-      const angle = (Math.PI*2*i) / count;
-      const speed = 2 + Math.random()*3;
-      fireworkParticles.push({ x, y, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, life: 0, maxLife: 50+Math.random()*20, hue });
-    }
-  }
-  function startFireworksInteractive(){
-    stopFx();
-    fireworkParticles = [];
-    let frame = 0;
-    function draw(){
-      fxCtx.fillStyle = 'rgba(5,5,10,0.18)';
-      fxCtx.fillRect(0, 0, fxCanvas.width, fxCanvas.height);
-      frame++;
-      if(frame % 110 === 0){
-        spawnFirework(Math.random()*fxCanvas.width, fxCanvas.height*0.25 + Math.random()*fxCanvas.height*0.3);
-      }
-      fireworkParticles.forEach(p => {
-        p.life++;
-        p.x += p.vx; p.y += p.vy;
-        p.vy += 0.03;
-        const alpha = Math.max(0, 1 - p.life/p.maxLife);
-        fxCtx.beginPath();
-        fxCtx.fillStyle = `hsla(${p.hue},90%,65%,${alpha})`;
-        fxCtx.arc(p.x, p.y, 2, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      fireworkParticles = fireworkParticles.filter(p => p.life < p.maxLife);
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  let ripples = [];
-  function spawnRipple(x, y){
-    ripples.push({ x, y, r: 4, alpha: 0.6 });
-  }
-  function startRippleInteractive(){
-    stopFx();
-    ripples = [];
-    spawnRipple(fxCanvas.width/2, fxCanvas.height/2);
-    let frame = 0;
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      frame++;
-      if(frame % 70 === 0) spawnRipple(mouseX, mouseY);
-      ripples.forEach(r => {
-        r.r += 1.6;
-        r.alpha *= 0.975;
-        fxCtx.beginPath();
-        fxCtx.strokeStyle = `rgba(120,220,220,${r.alpha})`;
-        fxCtx.lineWidth = 2;
-        fxCtx.arc(r.x, r.y, r.r, 0, Math.PI*2);
-        fxCtx.stroke();
-      });
-      ripples = ripples.filter(r => r.alpha > 0.02);
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  let constellationStars = [];
-  function startConstellationInteractive(){
-    stopFx();
-    constellationStars = [];
-    for(let i = 0; i < 70; i++){
-      constellationStars.push({ x: Math.random()*fxCanvas.width, y: Math.random()*fxCanvas.height, vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3 });
-    }
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      constellationStars.forEach(s => {
-        s.x += s.vx; s.y += s.vy;
-        if(s.x < 0 || s.x > fxCanvas.width) s.vx *= -1;
-        if(s.y < 0 || s.y > fxCanvas.height) s.vy *= -1;
-        fxCtx.beginPath();
-        fxCtx.fillStyle = 'rgba(200,210,255,0.8)';
-        fxCtx.arc(s.x, s.y, 1.6, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      // connect stars near the mouse to the cursor, and to each other
-      for(let i = 0; i < constellationStars.length; i++){
-        const s = constellationStars[i];
-        const dxm = mouseX - s.x, dym = mouseY - s.y;
-        const dm = Math.sqrt(dxm*dxm + dym*dym);
-        if(dm < 160){
-          fxCtx.beginPath();
-          fxCtx.strokeStyle = `rgba(140,166,255,${(1 - dm/160)*0.5})`;
-          fxCtx.lineWidth = 1;
-          fxCtx.moveTo(s.x, s.y);
-          fxCtx.lineTo(mouseX, mouseY);
-          fxCtx.stroke();
-        }
-        for(let j = i+1; j < constellationStars.length; j++){
-          const o = constellationStars[j];
-          const dx = o.x - s.x, dy = o.y - s.y;
-          const d = Math.sqrt(dx*dx + dy*dy);
-          if(d < 90){
-            fxCtx.beginPath();
-            fxCtx.strokeStyle = `rgba(140,166,255,${(1 - d/90)*0.25})`;
-            fxCtx.lineWidth = 1;
-            fxCtx.moveTo(s.x, s.y);
-            fxCtx.lineTo(o.x, o.y);
-            fxCtx.stroke();
-          }
-        }
-      }
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  let bubbleList = [];
-  function popBubblesNear(x, y){
-    bubbleList.forEach(b => {
-      const dx = b.x - x, dy = b.y - y;
-      if(Math.sqrt(dx*dx + dy*dy) < b.r + 20 && !b.popped){
-        b.popped = true;
-        b.popFrame = 0;
-      }
-    });
-  }
-  function startBubblesInteractive(){
-    stopFx();
-    bubbleList = [];
-    for(let i = 0; i < 26; i++){
-      bubbleList.push({ x: Math.random()*fxCanvas.width, y: fxCanvas.height + Math.random()*300, r: 8+Math.random()*22, speed: 0.5+Math.random()*1.2, drift: Math.random()*2-1, popped: false, popFrame: 0 });
-    }
-    function draw(){
-      fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-      bubbleList.forEach(b => {
-        if(b.popped){
-          b.popFrame++;
-          const pr = b.r + b.popFrame*3;
-          fxCtx.beginPath();
-          fxCtx.strokeStyle = `rgba(80,190,195,${Math.max(0, 0.6 - b.popFrame*0.06)})`;
-          fxCtx.lineWidth = 2;
-          fxCtx.arc(b.x, b.y, pr, 0, Math.PI*2);
-          fxCtx.stroke();
-          if(b.popFrame > 10){
-            b.popped = false; b.popFrame = 0;
-            b.x = Math.random()*fxCanvas.width; b.y = fxCanvas.height + Math.random()*100; b.r = 8+Math.random()*22;
-          }
-          return;
-        }
-        b.y -= b.speed;
-        b.x += Math.sin(b.y*0.01)*b.drift*0.4;
-        if(b.y < -b.r){ b.y = fxCanvas.height + Math.random()*100; b.x = Math.random()*fxCanvas.width; }
-        fxCtx.beginPath();
-        fxCtx.strokeStyle = 'rgba(80,190,195,0.55)';
-        fxCtx.lineWidth = 1.5;
-        fxCtx.arc(b.x, b.y, b.r, 0, Math.PI*2);
-        fxCtx.stroke();
-        fxCtx.beginPath();
-        fxCtx.fillStyle = 'rgba(255,255,255,0.35)';
-        fxCtx.arc(b.x - b.r*0.3, b.y - b.r*0.3, b.r*0.18, 0, Math.PI*2);
-        fxCtx.fill();
-      });
-      fxRAF = requestAnimationFrame(draw);
-    }
-    draw();
-  }
-
-  let currentTheme = 'vinyl';
-
-  function applyTheme(theme){
-    currentTheme = theme;
-    document.body.setAttribute('data-theme', theme);
-    if(theme === 'matrix') startMatrixRain();
-    else if(theme === 'galaxy') startGalaxyStars();
-    else if(theme === 'aurora') startAurora();
-    else if(theme === 'rain') startRain();
-    else if(theme === 'fireflies') startFireflies();
-    else if(theme === 'snowfall') startSnowfall();
-    else if(theme === 'lavalamp') startLavaLamp();
-    else if(theme === 'nebula') startNebulaInteractive();
-    else if(theme === 'fireworks') startFireworksInteractive();
-    else if(theme === 'ripple') startRippleInteractive();
-    else if(theme === 'constellation') startConstellationInteractive();
-    else if(theme === 'bubbles') startBubblesInteractive();
-    else stopFx();
-    dbSetSetting('theme', theme);
-    document.querySelectorAll('.theme-swatch').forEach(el => {
-      el.classList.toggle('active', el.dataset.theme === theme);
-    });
-  }
-
-  document.querySelectorAll('.theme-swatch').forEach(btn => {
-    btn.addEventListener('click', () => { applyTheme(btn.dataset.theme); closeAllPopovers(); });
-  });
-
-  // ---------- Toolbar popovers ----------
-  function closeAllPopovers(){
-    document.querySelectorAll('.popover').forEach(p => p.classList.remove('open'));
-  }
-  function togglePopover(el){
-    const isOpen = el.classList.contains('open');
-    closeAllPopovers();
-    if(!isOpen) el.classList.add('open');
-  }
-  themeBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePopover(themePanel); });
-  eqBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePopover(eqPanel); });
-  sleepBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePopover(sleepPanel); });
-  document.addEventListener('click', () => closeAllPopovers());
-  document.querySelectorAll('.popover').forEach(p => p.addEventListener('click', e => e.stopPropagation()));
-
-  // ---------- Mini player mode ----------
-  function applyMini(mini){
-    document.body.classList.toggle('mini-mode', mini);
-    miniBtn.classList.toggle('active', mini);
-    miniBtn.title = mini ? 'Exit mini player' : 'Mini player';
-    try{
-      if(window.pywebview && window.pywebview.api){
-        if(mini && window.pywebview.api.enter_mini) window.pywebview.api.enter_mini();
-        if(!mini && window.pywebview.api.exit_mini) window.pywebview.api.exit_mini();
-      }
-    }catch(e){}
-  }
-  miniBtn.addEventListener('click', () => applyMini(!document.body.classList.contains('mini-mode')));
-
-  // ---------- Controls ----------
-  playBtn.addEventListener('click', () => isPlaying ? pause() : play());
-  nextBtn.addEventListener('click', () => playNext(false));
-  prevBtn.addEventListener('click', playPrev);
   shuffleBtn.addEventListener('click', () => {
     isShuffle = !isShuffle;
     shuffleBtn.classList.toggle('toggled', isShuffle);
   });
+
   repeatBtn.addEventListener('click', () => {
-    repeatMode = (repeatMode + 1) % 3;
-    repeatBtn.classList.toggle('toggled', repeatMode !== 0);
-    repeatBtn.style.opacity = repeatMode === 2 ? '0.7' : '1';
-    repeatBtn.title = repeatMode === 0 ? 'Repeat off' : repeatMode === 1 ? 'Repeat all' : 'Repeat one';
+    isRepeat = !isRepeat;
+    repeatBtn.classList.toggle('toggled', isRepeat);
   });
 
-  bar.addEventListener('click', (e) => {
-    if(!audio.duration) return;
-    const rect = bar.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    audio.currentTime = pct * audio.duration;
-  });
+  searchInput.addEventListener('input', render);
 
-  volBar.addEventListener('click', (e) => {
-    const rect = volBar.getBoundingClientRect();
-    let pct = (e.clientX - rect.left) / rect.width;
-    pct = Math.max(0, Math.min(1, pct));
-    audio.volume = pct;
-    volFill.style.width = (pct*100) + '%';
-    dbSetSetting('volume', pct);
-  });
-
-  trackListEl.addEventListener('dblclick', (e) => {
-    const row = e.target.closest('.track-row');
-    if(!row) return;
-    const id = row.dataset.id;
-    const idx = libIndexOf(id);
-    if(idx !== -1) loadTrack(idx, true);
-  });
-
-  trackListEl.addEventListener('click', (e) => {
-    const del = e.target.closest('[data-del]');
-    if(del){
-      const id = del.dataset.del;
-      removeTrack(id);
+  document.getElementById('clearBtn').addEventListener('click', async () => {
+    if (confirm("Clear all songs from your local storage?")) {
+      await dbClear();
+      library = [];
+      currentIndex = -1;
+      audio.pause();
+      npTitle.textContent = "Nothing loaded yet";
+      npArtist.textContent = "ADD SOME MUSIC TO BEGIN";
+      discText.textContent = "Groove";
+      discArtist.textContent = "";
+      disc.classList.remove('spinning');
+      tonearm.classList.remove('playing');
+      render();
     }
   });
 
-  searchEl.addEventListener('input', render);
+  // --------- Adding / removing files ---------
 
-  // ---------- Drag to reorder ----------
-  trackListEl.addEventListener('dragstart', (e) => {
-    const row = e.target.closest('.track-row');
-    if(!row || row.getAttribute('draggable') !== 'true') return;
-    dragId = row.dataset.id;
-    e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => row.classList.add('dragging'), 0);
-  });
-  trackListEl.addEventListener('dragend', (e) => {
-    const row = e.target.closest('.track-row');
-    if(row) row.classList.remove('dragging');
-    document.querySelectorAll('.track-row.drag-over').forEach(r => r.classList.remove('drag-over'));
-    dragId = null;
-  });
-  trackListEl.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    const row = e.target.closest('.track-row');
-    if(!row || !dragId) return;
-    document.querySelectorAll('.track-row.drag-over').forEach(r => r.classList.remove('drag-over'));
-    row.classList.add('drag-over');
-  });
-  trackListEl.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    const row = e.target.closest('.track-row');
-    document.querySelectorAll('.track-row.drag-over').forEach(r => r.classList.remove('drag-over'));
-    if(!row || !dragId) return;
-    const targetId = row.dataset.id;
-    if(targetId === dragId) return;
-    const fromIdx = library.findIndex(t => t.id === dragId);
-    const toIdx = library.findIndex(t => t.id === targetId);
-    if(fromIdx === -1 || toIdx === -1) return;
-    const [moved] = library.splice(fromIdx, 1);
-    library.splice(toIdx, 0, moved);
-    for(let i = 0; i < library.length; i++){
-      library[i].order = i;
-      await dbPut(library[i]);
+  async function addFiles(fileList){
+    for(const file of fileList){
+      // Workaround for iOS Safari empty MIME type
+      const fileType = file.type || 'audio/mpeg';
+      const hasAudioExt = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name);
+
+      if (!fileType.startsWith('audio/') && !hasAudioExt) continue;
+
+      let { artist, title } = guessArtistTitle(file.name);
+
+      try {
+        // 1. Read array buffer directly (iOS friendly)
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // 2. Safely attempt ID3 parsing without letting it crash the upload
+        try {
+          const tags = await extractId3Tags(file);
+          if (tags && tags.title) title = tags.title;
+          if (tags && tags.artist) artist = tags.artist;
+        } catch (tagErr) {
+          console.warn('ID3 tag reading skipped on iOS:', tagErr);
+        }
+
+        // 3. Store pure Blob created from the ArrayBuffer into IndexedDB
+        const audioBlob = new Blob([arrayBuffer], { type: fileType });
+
+        await dbAddTrack({
+          id: Date.now() + Math.random(),
+          name: file.name,
+          artist: artist,
+          title: title,
+          blob: audioBlob
+        });
+      } catch (err) {
+        console.error('Error adding track on iOS:', err);
+      }
     }
+
+    library = await dbAll();
     render();
-  });
+  }
 
-  // ---------- Adding / removing files ----------
+  // Attach event listeners AFTER function definition
+  const addBtn = document.getElementById('addBtn');
+  const fileInput = document.getElementById('file-input');
+
   addBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', async (e) => {
+
+  fileInput.addEventListener('change', async (e) => {
     if (!e.target.files.length) return;
     await addFiles(e.target.files);
     fileInput.value = '';
-});
-async function addFiles(fileList){
-    for(const file of fileList){
-        // Workaround for iOS Safari empty MIME type
-        const fileType = file.type || 'audio/mpeg';
-        const hasAudioExt = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name);
-        
-        if (!fileType.startsWith('audio/') && !hasAudioExt) continue;
+  });
 
-        let { artist, title } = guessArtistTitle(file.name);
-        
-        try {
-            // 1. Read array buffer directly (iOS friendly)
-            const arrayBuffer = await file.arrayBuffer();
-            
-            // 2. Safely attempt ID3 parsing without letting it crash the upload
-            try {
-                const tags = await extractId3Tags(file);
-                if (tags && tags.title) title = tags.title;
-                if (tags && tags.artist) artist = tags.artist;
-            } catch (tagErr) {
-                console.warn('ID3 tag reading skipped on iOS:', tagErr);
-            }
-
-            // 3. Store pure Blob created from the ArrayBuffer into IndexedDB
-            const audioBlob = new Blob([arrayBuffer], { type: fileType });
-
-            await dbAddTrack({
-                id: Date.now() + Math.random(),
-                name: file.name,
-                artist: artist,
-                title: title,
-                blob: audioBlob
-            });
-        } catch (err) {
-            console.error('Error adding track on iOS:', err);
-        }
+  // Drag and drop onto stage/window
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length) {
+      await addFiles(e.dataTransfer.files);
     }
-    
-    library = await dbAll();
-    render();
-}
+  });
 
-      extractAlbumArt(file).then(async (artBlob) => {
-        if(artBlob){
-          track.art = artBlob;
-          await dbPut(track);
-          if(library[currentIndex] && library[currentIndex].id === track.id){
-            setDiscVisual(track);
+  // ---------- Popovers & Panels ----------
+  const themeBtn = document.getElementById('themeBtn');
+  const themePanel = document.getElementById('themePanel');
+  const eqBtn = document.getElementById('eqBtn');
+  const eqPanel = document.getElementById('eqPanel');
+  const sleepBtn = document.getElementById('sleepBtn');
+  const sleepPanel = document.getElementById('sleepPanel');
+  const miniBtn = document.getElementById('miniBtn');
+
+  function closeAllPopovers() {
+    themePanel.classList.remove('open');
+    eqPanel.classList.remove('open');
+    sleepPanel.classList.remove('open');
+  }
+
+  themeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = themePanel.classList.contains('open');
+    closeAllPopovers();
+    if (!wasOpen) themePanel.classList.add('open');
+  });
+
+  eqBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = eqPanel.classList.contains('open');
+    closeAllPopovers();
+    if (!wasOpen) eqPanel.classList.add('open');
+  });
+
+  sleepBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = sleepPanel.classList.contains('open');
+    closeAllPopovers();
+    if (!wasOpen) sleepPanel.classList.add('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.popover') && !e.target.closest('.icon-btn')) {
+      closeAllPopovers();
+    }
+  });
+
+  miniBtn.addEventListener('click', () => {
+    document.body.classList.toggle('mini-mode');
+    miniBtn.classList.toggle('active');
+  });
+
+  // Theme selection
+  document.querySelectorAll('.theme-swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const theme = btn.dataset.theme;
+      setTheme(theme);
+    });
+  });
+
+  function setTheme(t) {
+    currentTheme = t;
+    if (t === 'vinyl') {
+      document.body.removeAttribute('data-theme');
+    } else {
+      document.body.setAttribute('data-theme', t);
+    }
+    document.querySelectorAll('.theme-swatch').forEach(b => {
+      b.classList.toggle('active', b.dataset.theme === t);
+    });
+    dbSaveSetting('theme', t);
+  }
+
+  // Equalizer Logic
+  const eqBass = document.getElementById('eqBass');
+  const eqMid = document.getElementById('eqMid');
+  const eqTreble = document.getElementById('eqTreble');
+
+  eqBass.addEventListener('input', (e) => { if (bassFilter) bassFilter.gain.value = e.target.value; });
+  eqMid.addEventListener('input', (e) => { if (midFilter) midFilter.gain.value = e.target.value; });
+  eqTreble.addEventListener('input', (e) => { if (trebleFilter) trebleFilter.gain.value = e.target.value; });
+
+  document.getElementById('eqResetBtn').addEventListener('click', () => {
+    eqBass.value = 0;
+    eqMid.value = 0;
+    eqTreble.value = 0;
+    if (bassFilter) bassFilter.gain.value = 0;
+    if (midFilter) midFilter.gain.value = 0;
+    if (trebleFilter) trebleFilter.gain.value = 0;
+  });
+
+  // Sleep Timer Logic
+  let sleepTimer = null;
+  let sleepEndTime = 0;
+  const sleepStatus = document.getElementById('sleepStatus');
+
+  document.querySelectorAll('.sleep-options button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const min = parseInt(btn.dataset.min, 10);
+      if (sleepTimer) clearTimeout(sleepTimer);
+      if (min === 0) {
+        sleepStatus.textContent = '';
+        sleepBtn.classList.remove('active');
+        return;
+      }
+      sleepStatus.textContent = `Stopping in ${min} minutes`;
+      sleepBtn.classList.add('active');
+      sleepTimer = setTimeout(() => {
+        audio.pause();
+        disc.classList.remove('spinning');
+        tonearm.classList.remove('playing');
+        updatePlayIcon(false);
+        sleepStatus.textContent = '';
+        sleepBtn.classList.remove('active');
+      }, min * 60 * 1000);
+    });
+  });
+
+  // ---------- Canvas Visualizations & Interactive Physics ----------
+  const canvas = document.getElementById('fxCanvas');
+  const ctx = canvas.getContext('2d');
+
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  let mouseX = canvas.width / 2;
+  let mouseY = canvas.height / 2;
+  let ripples = [];
+  let fireworks = [];
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  });
+
+  window.addEventListener('click', (e) => {
+    if (currentTheme === 'ripple') {
+      ripples.push({ x: e.clientX, y: e.clientY, r: 0, alpha: 1 });
+    } else if (currentTheme === 'fireworks') {
+      createFirework(e.clientX, e.clientY);
+    }
+  });
+
+  function createFirework(x, y) {
+    const count = 30;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 / count) * i;
+      const speed = Math.random() * 4 + 2;
+      fireworks.push({
+        x: x, y: y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        alpha: 1,
+        color: `hsl(${Math.random() * 360}, 100%, 60%)`
+      });
+    }
+  }
+
+  // Particle sets for dynamic visual themes
+  const particles = Array.from({ length: 60 }, () => ({
+    x: Math.random() * window.innerWidth,
+    y: Math.random() * window.innerHeight,
+    vx: (Math.random() - 0.5) * 1.5,
+    vy: (Math.random() - 0.5) * 1.5,
+    size: Math.random() * 3 + 1
+  }));
+
+  function drawFX() {
+    requestAnimationFrame(drawFX);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    let audioFreq = 0;
+    if (analyser) {
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i];
+      audioFreq = sum / data.length;
+    }
+
+    if (currentTheme === 'rain') {
+      ctx.strokeStyle = 'rgba(111, 168, 220, 0.4)';
+      ctx.lineWidth = 1;
+      particles.forEach(p => {
+        p.y += p.size * 3 + (audioFreq * 0.05);
+        if (p.y > canvas.height) p.y = 0;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x, p.y + 12);
+        ctx.stroke();
+      });
+    } else if (currentTheme === 'snowfall') {
+      ctx.fillStyle = 'rgba(234, 243, 250, 0.6)';
+      particles.forEach(p => {
+        p.y += p.size * 0.5;
+        p.x += Math.sin(p.y * 0.01);
+        if (p.y > canvas.height) p.y = 0;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } else if (currentTheme === 'fireflies') {
+      particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+        const glow = Math.sin(Date.now() * 0.003 + p.x) * 0.5 + 0.5;
+        ctx.fillStyle = `rgba(200, 255, 140, ${glow * 0.8})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size + (audioFreq * 0.02), 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } else if (currentTheme === 'constellation') {
+      ctx.fillStyle = 'rgba(140, 166, 255, 0.7)';
+      ctx.strokeStyle = 'rgba(140, 166, 255, 0.15)';
+      particles.forEach((p, i) => {
+        p.x += p.vx * 0.5;
+        p.y += p.vy * 0.5;
+        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+
+        for (let j = i + 1; j < particles.length; j++) {
+          const p2 = particles[j];
+          const dist = Math.hypot(p.x - p2.x, p.y - p2.y);
+          if (dist < 100) {
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
           }
         }
       });
-    }
-    fileInput.value = '';
-  }
-
-  async function removeTrack(id){
-    const idx = libIndexOf(id);
-    if(idx === -1) return;
-    if(idx === currentIndex){
-      audio.pause();
-      audio.src = '';
-      currentIndex = -1;
-      npTitle.textContent = 'Nothing loaded yet';
-      npArtist.textContent = 'ADD SOME MUSIC TO BEGIN';
-      setDiscVisual(null);
-    } else if(idx < currentIndex){
-      currentIndex--;
-    }
-    library.splice(idx, 1);
-    await dbDelete(id);
-    render();
-  }
-
-  clearBtn.addEventListener('click', async () => {
-    if(library.length === 0) return;
-    if(!confirm('Remove all songs from your library? This cannot be undone.')) return;
-    audio.pause();
-    audio.src = '';
-    currentIndex = -1;
-    library = [];
-    await dbClear();
-    npTitle.textContent = 'Nothing loaded yet';
-    npArtist.textContent = 'ADD SOME MUSIC TO BEGIN';
-    setDiscVisual(null);
-    render();
-  });
-
-  // ---------- Keyboard shortcuts ----------
-  document.addEventListener('keydown', (e) => {
-    if(e.target.tagName === 'INPUT') return;
-    if(e.code === 'Space'){ e.preventDefault(); isPlaying ? pause() : play(); }
-    if(e.code === 'ArrowRight' && e.shiftKey){ playNext(false); }
-    if(e.code === 'ArrowLeft' && e.shiftKey){ playPrev(); }
-  });
-
-  // ---------- Init ----------
-  (async function init(){
-    try{
-      db = await openDB();
-      library = await dbAll();
-
-      let needsMigration = false;
-      library.forEach((t, i) => {
-        if(typeof t.order !== 'number'){ t.order = i; needsMigration = true; }
-        if(t.art === undefined){ t.art = null; }
-      });
-      if(needsMigration){ for(const t of library) await dbPut(t); }
-      library.sort((a,b) => a.order - b.order);
-
-      const savedTheme = await dbGetSetting('theme');
-      applyTheme(savedTheme || 'vinyl');
-
-      const savedVol = await dbGetSetting('volume');
-      if(typeof savedVol === 'number'){
-        audio.volume = savedVol;
-        volFill.style.width = (savedVol*100) + '%';
-      } else {
-        volFill.style.width = (audio.volume*100) + '%';
+    } else if (currentTheme === 'ripple') {
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        r.r += 2 + (audioFreq * 0.05);
+        r.alpha -= 0.015;
+        if (r.alpha <= 0) {
+          ripples.splice(i, 1);
+          continue;
+        }
+        ctx.strokeStyle = `rgba(79, 213, 208, ${r.alpha})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+        ctx.stroke();
       }
-
-      savedEq.bass = (await dbGetSetting('eqBass')) ?? 0;
-      savedEq.mid = (await dbGetSetting('eqMid')) ?? 0;
-      savedEq.treble = (await dbGetSetting('eqTreble')) ?? 0;
-      eqBassEl.value = savedEq.bass;
-      eqMidEl.value = savedEq.mid;
-      eqTrebleEl.value = savedEq.treble;
-    } catch(err){
-      console.error('Storage error', err);
-      applyTheme('vinyl');
-      volFill.style.width = (audio.volume*100) + '%';
+    } else if (currentTheme === 'fireworks') {
+      for (let i = fireworks.length - 1; i >= 0; i--) {
+        const f = fireworks[i];
+        f.x += f.vx;
+        f.y += f.vy;
+        f.vy += 0.05; // gravity
+        f.alpha -= 0.015;
+        if (f.alpha <= 0) {
+          fireworks.splice(i, 1);
+          continue;
+        }
+        ctx.fillStyle = f.color;
+        ctx.globalAlpha = f.alpha;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
+    } else if (currentTheme === 'bubbles') {
+      ctx.fillStyle = 'rgba(63, 191, 196, 0.25)';
+      particles.forEach(p => {
+        p.y -= p.size * 0.8;
+        if (p.y < -10) {
+          p.y = canvas.height + 10;
+          p.x = Math.random() * canvas.width;
+        }
+        ctx.beginPath();
+        ctx.arc(p.x + Math.sin(p.y * 0.02) * 10, p.y, p.size * 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
     }
+  }
+  drawFX();
+
+  // Initialization
+  openDB().then(async () => {
+    library = await dbAll();
+    const savedTheme = await dbGetSetting('theme');
+    if (savedTheme) setTheme(savedTheme);
     render();
-  })();
+  }).catch(err => console.error('DB Open Failed:', err));
 
 })();
 </script>
