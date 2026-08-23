@@ -1981,34 +1981,47 @@ fileInput.addEventListener('change', async (e) => {
     await addFiles(e.target.files);
     fileInput.value = '';
 });
-  async function addFiles(fileList){
+async function addFiles(fileList){
     for(const file of fileList){
-      const isAudioType = file.type.startsWith('audio/');
-const hasAudioExt = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name);
-if (!isAudioType && !hasAudioExt) continue;
-      let { artist, title } = guessArtistTitle(file.name);
-      try{
-        const tags = await extractId3Tags(file);
-        if(tags.title) title = tags.title;
-        if(tags.artist) artist = tags.artist;
-      }catch(e){}
+        // Workaround for iOS Safari empty MIME type
+        const fileType = file.type || 'audio/mpeg';
+        const hasAudioExt = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name);
+        
+        if (!fileType.startsWith('audio/') && !hasAudioExt) continue;
 
-      const id = 't_' + Date.now() + '_' + Math.random().toString(36).slice(2,9);
-      const order = library.length;
-      const track = { id, name: file.name, artist, title, blob: file, duration: null, order, art: null };
+        let { artist, title } = guessArtistTitle(file.name);
+        
+        try {
+            // 1. Read array buffer directly (iOS friendly)
+            const arrayBuffer = await file.arrayBuffer();
+            
+            // 2. Safely attempt ID3 parsing without letting it crash the upload
+            try {
+                const tags = await extractId3Tags(file);
+                if (tags && tags.title) title = tags.title;
+                if (tags && tags.artist) artist = tags.artist;
+            } catch (tagErr) {
+                console.warn('ID3 tag reading skipped on iOS:', tagErr);
+            }
 
-      library.push(track);
-      render();
-      await dbPut(track);
+            // 3. Store pure Blob created from the ArrayBuffer into IndexedDB
+            const audioBlob = new Blob([arrayBuffer], { type: fileType });
 
-      const tempUrl = URL.createObjectURL(file);
-      const tempAudio = new Audio(tempUrl);
-      tempAudio.addEventListener('loadedmetadata', async () => {
-        track.duration = tempAudio.duration;
-        URL.revokeObjectURL(tempUrl);
-        await dbPut(track);
-        render();
-      });
+            await dbAddTrack({
+                id: Date.now() + Math.random(),
+                name: file.name,
+                artist: artist,
+                title: title,
+                blob: audioBlob
+            });
+        } catch (err) {
+            console.error('Error adding track on iOS:', err);
+        }
+    }
+    
+    library = await dbAll();
+    render();
+}
 
       extractAlbumArt(file).then(async (artBlob) => {
         if(artBlob){
