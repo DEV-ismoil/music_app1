@@ -753,7 +753,7 @@
       <button class="btn primary" id="addBtn">+ Add music files</button>
       <button class="btn" id="clearBtn" title="Remove everything">Clear</button>
     </div>
-    <input type="file" id="file-input" accept="audio/*, .mp3, .wav, .m4a, .aac, .ogg, .flac" multiple style="display: none;">
+    <input type="file" id="file-input" accept="audio/*" multiple style="display: none;">
     <div class="track-list" id="trackList"></div>
   </div>
 
@@ -986,9 +986,11 @@
 
   const trackListEl = document.getElementById('trackList');
   const searchEl = document.getElementById('search');
-  const fileInput = document.getElementById('fileInput');
+  const fileInput = document.getElementById('file-input');
   const addBtn = document.getElementById('addBtn');
-  const clearBtn = document.getElementById('clearBtn');
+  addBtn.addEventListener('click', () => {
+    fileInput.click();
+});
   const npTitle = document.getElementById('npTitle');
   const npArtist = document.getElementById('npArtist');
   const disc = document.getElementById('disc');
