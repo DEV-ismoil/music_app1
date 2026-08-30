@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Groove">
 <title>Groove</title>
 <style>
   :root {
@@ -364,7 +367,6 @@
   <!-- Main Area -->
   <div class="main-content">
     <div class="top-bar">
-      <!-- Expanded accept attribute for standard iOS/Safari audio support -->
       <label class="upload-btn">
         + Add Songs
         <input type="file" id="fileInput" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-m4a" multiple>
@@ -416,6 +418,17 @@
   </div>
 
   <script>
+    // --- Register Service Worker for iOS Background Persistence ---
+    if ('serviceWorker' in navigator) {
+      const swCode = `
+        self.addEventListener('install', e => self.skipWaiting());
+        self.addEventListener('activate', e => self.clients.claim());
+        self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
+      `;
+      const blob = new Blob([swCode], { type: 'application/javascript' });
+      navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(() => {});
+    }
+
     // --- Database Setup (IndexedDB for Persistent Storage) ---
     let db;
     const request = indexedDB.open("GrooveMusicDB", 1);
@@ -439,6 +452,10 @@
     let isRepeat = false;
 
     const audio = new Audio();
+    audio.setAttribute('playsinline', 'true');
+    audio.setAttribute('webkit-playsinline', 'true');
+    audio.preload = 'auto';
+
     let objectUrl = null;
 
     // Web Audio API Elements for Visualizer
@@ -459,6 +476,13 @@
     document.getElementById('fileInput').addEventListener('change', handleFileUpload);
     audio.addEventListener('timeupdate', updateProgress);
     audio.addEventListener('ended', handleTrackEnd);
+
+    // Keep AudioContext alive on visibility changes on iOS
+    document.addEventListener('visibilitychange', () => {
+      if (audioCtx && audioCtx.state === 'suspended' && isPlaying) {
+        audioCtx.resume();
+      }
+    });
 
     // --- iOS Media Session Helper ---
     function updateMediaSession(track) {
@@ -571,9 +595,7 @@
       npArtist.textContent = t.artist;
       setDiscVisual(t);
 
-      // Update iOS metadata & background media controls
       updateMediaSession(t);
-
       render();
 
       if (autoplay) {
@@ -587,6 +609,9 @@
       if (currentIndex === -1 && library.length > 0) {
         loadTrack(0, true);
         return;
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
       }
       audio.play().then(() => {
         isPlaying = true;
@@ -727,7 +752,6 @@
       analyser = audioCtx.createAnalyser();
       source = audioCtx.createMediaElementSource(audio);
 
-      // Routing fix for iOS background audio:
       source.connect(audioCtx.destination);
       source.connect(analyser);
 
