@@ -727,8 +727,9 @@
       analyser = audioCtx.createAnalyser();
       source = audioCtx.createMediaElementSource(audio);
 
+      // Routing fix for iOS background audio:
+      source.connect(audioCtx.destination);
       source.connect(analyser);
-      analyser.connect(audioCtx.destination);
 
       analyser.fftSize = 64;
       canvas = document.getElementById('visualizer');
