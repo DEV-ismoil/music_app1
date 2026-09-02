@@ -1117,7 +1117,7 @@
       <button class="btn primary" id="addBtn">+ Add music files</button>
       <button class="btn" id="clearBtn" title="Remove everything">Clear</button>
     </div>
-    <input type="file" id="fileInput" accept="audio/*" multiple>
+    <input type="file" id="fileInput" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg" multiple inputmode="file" style="display:none;">
     <div class="playlist-row" id="playlistRow">
       <button class="playlist-chip active" data-playlist="" id="allSongsChip">All Songs</button>
       <button class="playlist-chip playlist-add" id="newPlaylistChip" title="New playlist">+</button>
@@ -3134,15 +3134,30 @@
 
   // ---------- Adding / removing files ----------
   addBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => addFiles(e.target.files));
+  fileInput.addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
 
-  document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if(e.dataTransfer.files && e.dataTransfer.files.length){
-      addFiles(e.dataTransfer.files);
-    }
-  });
+  for (const file of files) {
+    const id = 'tr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    const name = file.name.replace(/\.[^/.]+$/, '');
+    const parts = name.split(' - ');
+    
+    // Read as ArrayBuffer for iOS Blob handle persistence
+    const buffer = await file.arrayBuffer();
+    const blob = new Blob([buffer], { type: file.type || 'audio/mpeg' });
+
+    const track = {
+      id,
+      title: parts.length > 1 ? parts[1] : name,
+      artist: parts.length > 1 ? parts[0] : 'Unknown Artist',
+      fileData: blob
+    };
+
+    await dbPut(track);
+  }
+  await loadLibrary();
+});
 
   async function addFiles(fileList){
     for(const file of fileList){
