@@ -1365,13 +1365,15 @@
     });
   }
   function dbPut(track){
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(track);
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e);
-    });
-  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    const req = store.put(track);
+    
+    req.onsuccess = () => resolve();
+    req.onerror = (e) => reject(e);
+  });
+}
   function dbDelete(id){
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
@@ -3139,23 +3141,30 @@
   if (!files.length) return;
 
   for (const file of files) {
-    const id = 'tr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    const name = file.name.replace(/\.[^/.]+$/, '');
-    const parts = name.split(' - ');
-    
-    // Read as ArrayBuffer for iOS Blob handle persistence
-    const buffer = await file.arrayBuffer();
-    const blob = new Blob([buffer], { type: file.type || 'audio/mpeg' });
+    try {
+      // 1. Convert file to ArrayBuffer FIRST outside DB transaction
+      const buffer = await file.arrayBuffer();
+      const blob = new Blob([buffer], { type: file.type || 'audio/mpeg' });
 
-    const track = {
-      id,
-      title: parts.length > 1 ? parts[1] : name,
-      artist: parts.length > 1 ? parts[0] : 'Unknown Artist',
-      fileData: blob
-    };
+      const id = 'tr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      const name = file.name.replace(/\.[^/.]+$/, '');
+      const parts = name.split(' - ');
 
-    await dbPut(track);
+      const track = {
+        id,
+        title: parts.length > 1 ? parts[1] : name,
+        artist: parts.length > 1 ? parts[0] : 'Unknown Artist',
+        fileData: blob
+      };
+
+      // 2. Put into IndexedDB after conversion completes
+      await dbPut(track);
+    } catch (err) {
+      console.error('Failed to process file on iOS:', err);
+    }
   }
+
+  // 3. Reload UI
   await loadLibrary();
 });
 
