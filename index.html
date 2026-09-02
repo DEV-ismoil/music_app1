@@ -1439,7 +1439,8 @@
   const audioB = new Audio();
   audioA.volume = 0.7;
   audioB.volume = 0.7;
-  let audio = audioA;        // the currently "active" element (kept as `audio` so existing code below just works)
+  let audio = new Audio();
+audio.preload = 'auto';        // the currently "active" element (kept as `audio` so existing code below just works)
   let standbyAudio = audioB; // the other one, used during a crossfade
   let crossfadeSeconds = 0;  // 0 = off (instant hard cut, old behavior)
   let isCrossfading = false;
