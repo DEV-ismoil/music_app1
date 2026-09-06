@@ -21,11 +21,17 @@ struct WebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        
+        // Grant permissions to access local files and storage
+        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        config.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
 
         let webView = WKWebView(frame: .zero, configuration: config)
 
         if let url = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets") {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            // Grant access to the entire root directory so audio files and storage load safely
+            let assetDir = url.deletingLastPathComponent()
+            webView.loadFileURL(url, allowingReadAccessTo: assetDir)
         } else if let url = URL(string: "https://groove.ismail.works") {
             webView.load(URLRequest(url: url))
         }
