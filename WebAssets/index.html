@@ -1444,10 +1444,15 @@
 
   // Two audio elements so we can crossfade between them: one plays the
   // current track while the other preloads/fades in the next one.
-const audioA = document.getElementById('audio-player') || new Audio();
+const audioA = document.createElement('audio');
+audioA.id = 'audio-player';
+audioA.setAttribute('playsinline', '');
+audioA.setAttribute('webkit-playsinline', '');
+audioA.preload = 'auto';
+(document.body || document.documentElement).appendChild(audioA);
 const audioB = new Audio();
-  audioA.volume = 0.7;
-  audioB.volume = 0.7;
+audioA.volume = 0.7;
+audioB.volume = 0.7;
   let audio = audioA;        // the currently "active" element (kept as `audio` so existing code below just works)
   let standbyAudio = audioB; // the other one, used during a crossfade
   let crossfadeSeconds = 0;  // 0 = off (instant hard cut, old behavior)
@@ -3436,7 +3441,5 @@ const audioB = new Audio();
     }
   });
 </script>
-<audio id="audio-player" playsinline webkit-playsinline preload="auto"></audio>
 </body>
 </html>
-})();
