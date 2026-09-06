@@ -5,6 +5,7 @@ import AVFoundation
 struct ContentView: View {
     var body: some View {
         GrooveWebView()
+            .ignoresSafeArea()
             .onAppear { configureBackgroundAudio() }
             .background(Color(red: 20/255, green: 18/255, blue: 15/255))
     }
