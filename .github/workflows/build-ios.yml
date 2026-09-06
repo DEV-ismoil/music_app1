@@ -1,0 +1,44 @@
+name: Build Groove iOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned .app
+        run: |
+          xcodebuild \
+            -project Groove.xcodeproj \
+            -scheme Groove \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package as unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -r "build/Build/Products/Release-iphoneos/Groove.app" Payload/
+          zip -r Groove.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Groove-ipa
+          path: Groove.ipa
