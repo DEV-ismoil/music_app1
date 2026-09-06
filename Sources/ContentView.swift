@@ -46,12 +46,16 @@ struct GrooveWebView: UIViewRepresentable {
         // since index.html only ever references its sibling files with
         // plain relative paths, this works correctly either way as long as
         // they all land in the same directory together.
-        let htmlURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets")
-            ?? Bundle.main.url(forResource: "index", withExtension: "html")
+let htmlURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets")
+    ?? Bundle.main.url(forResource: "index", withExtension: "html")
 
-        if let url = htmlURL {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-        }
+if let url = htmlURL {
+    webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+} else {
+    // Fallback error UI so you never get stuck on a plain black screen
+    let errorHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>index.html not found in bundle</h2></body></html>"
+    webView.loadHTMLString(errorHTML, baseURL: nil)
+}
         return webView
     }
 
