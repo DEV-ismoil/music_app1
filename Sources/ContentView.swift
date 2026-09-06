@@ -2,6 +2,10 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
+import SwiftUI
+import WebKit
+import AVFoundation
+
 struct ContentView: View {
     var body: some View {
         GrooveWebView()
@@ -10,10 +14,6 @@ struct ContentView: View {
             .background(Color(red: 20/255, green: 18/255, blue: 15/255))
     }
 
-    /// This is the one thing a website can never do for itself: declare a
-    /// real playback audio session. Combined with the UIBackgroundModes
-    /// "audio" capability (set in Info.plist via project.yml), this is what
-    /// actually unlocks indefinite background/locked-screen playback.
     private func configureBackgroundAudio() {
         do {
             let session = AVAudioSession.sharedInstance()
@@ -24,7 +24,6 @@ struct ContentView: View {
         }
     }
 }
-
 struct GrooveWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
