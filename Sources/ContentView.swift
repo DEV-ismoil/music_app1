@@ -59,14 +59,16 @@ struct GrooveWebView: UIViewRepresentable {
 
     class Coordinator: NSObject, WKNavigationDelegate {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Force viewport scale to device width dynamically via JavaScript
+            // Calculate scale ratio and shrink the web app layout to fit the screen
             let js = """
-            var meta = document.createElement('meta');
-            meta.name = 'viewport';
-            meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
-            document.getElementsByTagName('head')[0].appendChild(meta);
-            document.body.style.width = '100vw';
-            document.body.style.overflowX = 'hidden';
+            var bodyWidth = document.body.scrollWidth || document.documentElement.scrollWidth;
+            var screenWidth = window.innerWidth;
+            if (bodyWidth > screenWidth) {
+                var scale = screenWidth / bodyWidth;
+                document.body.style.transform = 'scale(' + scale + ')';
+                document.body.style.transformOrigin = 'top left';
+                document.body.style.width = (100 / scale) + '%';
+            }
             """
             webView.evaluateJavaScript(js, completionHandler: nil)
         }
