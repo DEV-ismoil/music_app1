@@ -34,13 +34,15 @@ struct GrooveWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        webView.scrollView.bounces = false
+        
+        // Enable vertical scrolling so you can reach bottom playback controls
+        webView.scrollView.isScrollEnabled = true
+        webView.scrollView.bounces = true
         webView.isOpaque = false
         webView.backgroundColor = UIColor(red: 20/255, green: 18/255, blue: 15/255, alpha: 1)
         webView.scrollView.backgroundColor = webView.backgroundColor
 
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
 
         let htmlURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets")
             ?? Bundle.main.url(forResource: "index", withExtension: "html")
@@ -59,16 +61,10 @@ struct GrooveWebView: UIViewRepresentable {
 
     class Coordinator: NSObject, WKNavigationDelegate {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Calculate scale ratio and shrink the web app layout to fit the screen
+            // Ensure full height visibility for play/pause/skip bar
             let js = """
-            var bodyWidth = document.body.scrollWidth || document.documentElement.scrollWidth;
-            var screenWidth = window.innerWidth;
-            if (bodyWidth > screenWidth) {
-                var scale = screenWidth / bodyWidth;
-                document.body.style.transform = 'scale(' + scale + ')';
-                document.body.style.transformOrigin = 'top left';
-                document.body.style.width = (100 / scale) + '%';
-            }
+            document.body.style.minHeight = '100vh';
+            document.body.style.paddingBottom = '40px';
             """
             webView.evaluateJavaScript(js, completionHandler: nil)
         }
