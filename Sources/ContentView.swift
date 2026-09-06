@@ -13,7 +13,7 @@ struct ContentView: View {
     private func configureBackgroundAudio() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true, options: [])
         } catch {
             print("Audio session configuration failed: \(error)")
@@ -35,7 +35,6 @@ struct GrooveWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         
-        // Enable vertical scrolling so you can reach bottom playback controls
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.bounces = true
         webView.isOpaque = false
@@ -49,9 +48,6 @@ struct GrooveWebView: UIViewRepresentable {
 
         if let url = htmlURL {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-        } else {
-            let errorHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>index.html not found in bundle</h2></body></html>"
-            webView.loadHTMLString(errorHTML, baseURL: nil)
         }
 
         return webView
@@ -61,7 +57,6 @@ struct GrooveWebView: UIViewRepresentable {
 
     class Coordinator: NSObject, WKNavigationDelegate {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Ensure full height visibility for play/pause/skip bar
             let js = """
             document.body.style.minHeight = '100vh';
             document.body.style.paddingBottom = '40px';
