@@ -1444,8 +1444,8 @@
 
   // Two audio elements so we can crossfade between them: one plays the
   // current track while the other preloads/fades in the next one.
-  const audioA = new Audio();
-  const audioB = new Audio();
+const audioA = document.getElementById('audio-player') || new Audio();
+const audioB = new Audio();
   audioA.volume = 0.7;
   audioB.volume = 0.7;
   let audio = audioA;        // the currently "active" element (kept as `audio` so existing code below just works)
@@ -3425,9 +3425,18 @@
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     });
   }
+}
 
-})();
+  })();
+
+  // Keep AudioContext active on iOS background state change
+  document.addEventListener('visibilitychange', () => {
+    if (typeof audioCtx !== 'undefined' && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  });
 </script>
 <audio id="audio-player" playsinline webkit-playsinline preload="auto"></audio>
 </body>
 </html>
+})();
