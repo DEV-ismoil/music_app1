@@ -3435,12 +3435,18 @@ let audio = audioA;     // the currently "active" element (kept as `audio` so ex
     });
 }
 
-  // Keep AudioContext active on iOS background state change
-  document.addEventListener('visibilitychange', () => {
-    if (typeof audioCtx !== 'undefined' && audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
-  });
+// Keep AudioContext active on iOS background state change
+function keepAudioContextAlive() {
+  if (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
+document.addEventListener('visibilitychange', keepAudioContextAlive);
+
+if (typeof audioA !== 'undefined') {
+  audioA.addEventListener('play', keepAudioContextAlive);
+  audioA.addEventListener('pause', keepAudioContextAlive);
+}
 </script>
 </body>
 </html>
