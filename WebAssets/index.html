@@ -3057,6 +3057,7 @@ function gainNodeFor(el){ return el === audioA ? gainA : gainB; }
     try{
       if(window.pywebview && window.pywebview.api){
         if(mini && window.pywebview.api.enter_mini) window.pywebview.api.enter_mini();
+  
         if(!mini && window.pywebview.api.exit_mini) window.pywebview.api.exit_mini();
       }
     }catch(e){}
@@ -3456,24 +3457,7 @@ function gainNodeFor(el){ return el === audioA ? gainA : gainB; }
       applyProgressStyle('classic');
       volFill.style.width = (audio.volume*100) + '%';
     }
-    render();
-  })();
-
-  // Register the service worker only when actually served over http(s) —
-  // this silently no-ops for the plain file:// version (desktop/exe), and
-  // registers only in a hosted PWA context (see manifest.json / sw.js).
-  // Only register a service worker when actually hosted on a real
-  // http(s) site (the iPhone/web install). Skip entirely inside the
-  // desktop exe (window.pywebview is only present there) and on plain
-  // file:// — registering against a sw.js that isn't bundled there
-  // would otherwise 404 and could stall page load in some WebView builds.
-  if(!window.pywebview && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.protocol === 'http:')){
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
-    });
-}
-
-// Keep AudioContext active on iOS background state change
+  // Keep AudioContext active on iOS background state change
 function keepAudioContextAlive() {
   if (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.state === 'suspended') {
     audioCtx.resume();
@@ -3485,6 +3469,22 @@ if (typeof audioA !== 'undefined') {
   audioA.addEventListener('play', keepAudioContextAlive);
   audioA.addEventListener('pause', keepAudioContextAlive);
 }
+    render();
+
+  // Register the service worker only when actually served over http(s) —
+  // this silently no-ops for the plain file:// version (desktop/exe), and
+  // registers only in a hosted PWA context (see manifest.json / sw.js).
+  // Only register a service worker when actually hosted on a real
+  // http(s) site (the iPhone/web install). Skip entirely inside the
+  // desktop exe (window.pywebview is only present there) and on plain
+  // file:// — registering against a sw.js that isn't bundled there
+  // would otherwise 404 and could stall page load in some WebView builds.
+  if (!window.pywebview && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.protocol === 'http:')) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+})();
 </script>
 </body>
 </html>
