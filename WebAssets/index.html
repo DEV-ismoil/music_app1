@@ -1449,9 +1449,13 @@ audioA.id = 'audio-player';
 audioA.setAttribute('playsinline', '');
 audioA.setAttribute('webkit-playsinline', '');
 audioA.preload = 'auto';
-window.addEventListener('DOMContentLoaded', () => {
+
+// Append immediately if body exists, or fallback safely
+if (document.body) {
   document.body.appendChild(audioA);
-});
+} else {
+  window.addEventListener('DOMContentLoaded', () => document.body.appendChild(audioA));
+}
 
 const audioB = new Audio();
 audioA.volume = 0.7;
