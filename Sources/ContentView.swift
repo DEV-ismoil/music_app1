@@ -2,10 +2,6 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
-import SwiftUI
-import WebKit
-import AVFoundation
-
 struct ContentView: View {
     var body: some View {
         GrooveWebView()
@@ -24,15 +20,12 @@ struct ContentView: View {
         }
     }
 }
+
 struct GrooveWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // Let audio/video play without a tap gate, and inline rather than
-        // popping into a system player — same as any normal app.
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-        // Default (non-ephemeral) data store, so IndexedDB (your library,
-        // playlists, settings) actually persists between launches.
         config.websiteDataStore = .default()
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -41,21 +34,20 @@ struct GrooveWebView: UIViewRepresentable {
         webView.backgroundColor = UIColor(red: 20/255, green: 18/255, blue: 15/255, alpha: 1)
         webView.scrollView.backgroundColor = webView.backgroundColor
 
-        // Look for index.html both inside a WebAssets subfolder and at the
-        // bundle root — XcodeGen's folder-reference behavior can vary, and
-        // since index.html only ever references its sibling files with
-        // plain relative paths, this works correctly either way as long as
-        // they all land in the same directory together.
-let htmlURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets")
-    ?? Bundle.main.url(forResource: "index", withExtension: "html")
+        // Force webview content to scale and fit device width
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
 
-if let url = htmlURL {
-    webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-} else {
-    // Fallback error UI so you never get stuck on a plain black screen
-    let errorHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>index.html not found in bundle</h2></body></html>"
-    webView.loadHTMLString(errorHTML, baseURL: nil)
-}
+        let htmlURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "WebAssets")
+            ?? Bundle.main.url(forResource: "index", withExtension: "html")
+
+        if let url = htmlURL {
+            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        } else {
+            let errorHTML = "<html><body style='background:#111;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h2>index.html not found in bundle</h2></body></html>"
+            webView.loadHTMLString(errorHTML, baseURL: nil)
+        }
+
         return webView
     }
 
