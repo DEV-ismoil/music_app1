@@ -1,6 +1,30 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  window.onerror = function(msg, url, line, col, error) {
+    var errDiv = document.createElement('div');
+    errDiv.style.position = 'fixed';
+    errDiv.style.top = '0';
+    errDiv.style.left = '0';
+    errDiv.style.width = '100%';
+    errDiv.style.height = '100%';
+    errDiv.style.backgroundColor = 'rgba(0,0,0,0.9)';
+    errDiv.style.color = '#ff5555';
+    errDiv.style.padding = '20px';
+    errDiv.style.zIndex = '99999';
+    errDiv.style.fontSize = '14px';
+    errDiv.style.fontFamily = 'monospace';
+    errDiv.style.overflow = 'scroll';
+    errDiv.innerHTML = '<h3>JavaScript Error Detected:</h3>' +
+      '<p><b>Message:</b> ' + msg + '</p>' +
+      '<p><b>Line:</b> ' + line + ' <b>Column:</b> ' + col + '</p>' +
+      '<p><b>URL:</b> ' + url + '</p>' +
+      '<pre>' + (error && error.stack ? error.stack : '') + '</pre>';
+    document.body ? document.body.appendChild(errDiv) : window.addEventListener('DOMContentLoaded', function() { document.body.appendChild(errDiv); });
+    return false;
+  };
+</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Groove</title>
@@ -1802,9 +1826,19 @@ let audio = audioA;     // the currently "active" element (kept as `audio` so ex
     el._objectUrl = URL.createObjectURL(track.blob);
     el.src = el._objectUrl;
   }
+function initAudioContext() {
+  if (typeof audioCtx === 'undefined' || !audioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      audioCtx = new AudioContextClass();
+    }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
 
-  function gainNodeFor(el){ return el === audioA ? gainA : gainB; }
-
+function gainNodeFor(el){ return el === audioA ? gainA : gainB; }
   function cancelCrossfade(){
     if(crossfadeTimeout){ clearTimeout(crossfadeTimeout); crossfadeTimeout = null; }
     if(isCrossfading){
@@ -3030,7 +3064,7 @@ let audio = audioA;     // the currently "active" element (kept as `audio` so ex
   miniBtn.addEventListener('click', () => applyMini(!document.body.classList.contains('mini-mode')));
 
   // ---------- Controls ----------
-  playBtn.addEventListener('click', () => isPlaying ? pause() : play());
+  playBtn.addEventListener('click', () => { initAudioContext(); isPlaying ? pause() : play(); });
   nextBtn.addEventListener('click', () => playNext(false));
   prevBtn.addEventListener('click', playPrev);
   shuffleBtn.addEventListener('click', () => {
