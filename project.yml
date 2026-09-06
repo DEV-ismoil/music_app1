@@ -8,22 +8,18 @@ targets:
   Groove:
     type: application
     platform: iOS
+    deploymentTarget: "16.0"
     sources:
       - path: Sources
-    resources:
       - path: WebAssets
+        buildPhase: resources
         type: folder
-      - path: Assets.xcassets
     info:
       path: Generated-Info.plist
       properties:
         CFBundleDisplayName: Groove
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
-        UILaunchScreen: {}
-        UIRequiresFullScreen: true
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
         UIBackgroundModes:
           - audio
         UIStatusBarStyle: UIStatusBarStyleLightContent
